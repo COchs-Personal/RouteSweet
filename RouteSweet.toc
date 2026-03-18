@@ -1,0 +1,37 @@
+## Interface: 120001
+## Title: RouteSweet
+## Notes: Shortest-path route planner for Midnight world quests, events, weeklies, and leveling content. Accounts for Skyriding vs static flight, portal zones, travel tools, XP-weighted routing, and personal per-activity timing averages.
+## Author: YourName
+## Version: v0.0.1
+## SavedVariables: RS_Settings
+## SavedVariablesPerCharacter: RS_CharData, RS_DumpData
+## IconTexture: Interface\AddOns\RouteSweet\Textures\MinimapIcon
+
+# Bootstrap — creates RS global, defaults, events, init
+RouteSweet.lua
+
+# Core — expansion registry FIRST (provides RS.Expansion API)
+Core\Expansion.lua
+
+# Expansion modules — register before core consumers
+Expansions\Midnight\Zones.lua
+Expansions\Midnight\Database.lua
+Expansions\Midnight\Activities.lua
+Expansions\Leveling\Zones.lua
+Expansions\Leveling\Database.lua
+Expansions\Leveling\Activities.lua
+
+# Core — consumers of registered expansion data
+Core\TravelTools.lua
+Core\FlightTime.lua
+Core\Timing.lua
+Core\Database.lua
+Core\DataDump.lua
+Core\Waypoint.lua
+Core\QuestScanner.lua
+Core\Routing.lua
+
+# UI
+UI\MainFrame.lua
+UI\SettingsFrame.lua
+UI\MinimapButton.lua
