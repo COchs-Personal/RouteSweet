@@ -10,6 +10,24 @@ local DB = {}
 leveling.db = DB
 
 -- ============================================================
+-- WARBAND XP BONUS
+-- 5% per level 90 character, up to 25% (5 characters).
+-- Detected via achievements 42328 (5%) through 42332 (25%).
+-- ============================================================
+DB.WARBAND_XP_ACHIEVEMENTS = { 42332, 42331, 42330, 42329, 42328 }  -- check highest first
+DB.WARBAND_XP_BONUS = { 25, 20, 15, 10, 5 }
+
+function DB:GetWarbandXPBonus()
+    for i, achID in ipairs(self.WARBAND_XP_ACHIEVEMENTS) do
+        local _, _, _, completed = GetAchievementInfo(achID)
+        if completed then
+            return self.WARBAND_XP_BONUS[i]
+        end
+    end
+    return 0
+end
+
+-- ============================================================
 -- QUEST CLASSIFICATION
 -- Maps Enum.QuestClassification values to RouteSweet activity types.
 -- ============================================================
@@ -77,7 +95,7 @@ DB.XP_PER_LEVEL_APPROX = {
     [89] = 750000,
 }
 
--- Returns estimated XP reward for a quest.
+-- Returns estimated XP reward for a quest (includes warband bonus).
 -- Tries GetQuestLogRewardXP first (works for quests in log and task quests).
 -- Returns 0 if unavailable.
 function DB:GetQuestXP(questID)
@@ -87,6 +105,7 @@ function DB:GetQuestXP(questID)
         local totalXP, baseXP = GetQuestLogRewardXP(questID)
         xp = totalXP or baseXP or 0
     end)
+    -- GetQuestLogRewardXP already includes warband bonus in totalXP
     return xp
 end
 
@@ -152,6 +171,80 @@ function DB:ClassifyQuest(questID, questLineInfo)
     end
 
     return "NORMAL"
+end
+
+-- ============================================================
+-- DELVER'S CALL — XP OPTIMIZATION
+-- These weekly quests scale XP with player level. Combined turn-in
+-- at level ~88.5 yields 1.25-1.5 levels of XP. Strategy:
+--   - Below 88: complete criteria (do the delves) but DO NOT turn in
+--   - At 88+: turn in all at once for massive XP
+-- ============================================================
+
+-- Known Delver's Call quest IDs (detected dynamically via name matching too)
+DB.DELVERS_CALL_PATTERN = "Delver's Call"
+DB.DELVERS_CALL_TURNIN_LEVEL = 88
+
+-- Checks if a quest is a Delver's Call quest by name pattern
+function DB:IsDelversCall(questID)
+    if not questID then return false end
+    local title = ""
+    pcall(function() title = C_QuestLog.GetTitleForQuestID(questID) or "" end)
+    return title:find(self.DELVERS_CALL_PATTERN) ~= nil
+end
+
+-- Returns the status of all Delver's Call quests in the log.
+-- { { questID, title, isComplete, objectives } ... }
+function DB:GetDelversCallStatus()
+    local results = {}
+    local numEntries = C_QuestLog.GetNumQuestLogEntries and C_QuestLog.GetNumQuestLogEntries() or 0
+
+    for i = 1, numEntries do
+        local info = nil
+        pcall(function() info = C_QuestLog.GetInfo(i) end)
+        if info and info.questID and info.title and info.title:find(self.DELVERS_CALL_PATTERN) then
+            -- Check if all objectives are complete
+            local allDone = false
+            pcall(function()
+                local objs = C_QuestLog.GetQuestObjectives(info.questID)
+                if objs and #objs > 0 then
+                    allDone = true
+                    for _, obj in ipairs(objs) do
+                        if not obj.finished then allDone = false; break end
+                    end
+                end
+            end)
+
+            table.insert(results, {
+                questID    = info.questID,
+                title      = info.title,
+                isComplete = allDone,
+            })
+        end
+    end
+
+    return results
+end
+
+-- Scores a Delver's Call quest for leveling routing.
+-- If criteria complete but player < 88: very low score (HOLD)
+-- If criteria complete and player >= 88: very high score (TURN IN NOW)
+-- If criteria incomplete: normal delve priority (go do the delve)
+function DB:ScoreDelversCall(questID, isComplete)
+    local level = UnitLevel("player") or 80
+
+    if isComplete then
+        if level >= self.DELVERS_CALL_TURNIN_LEVEL then
+            -- Turn in immediately — massive XP at this level
+            return 50  -- highest priority
+        else
+            -- Hold for later — don't turn in yet
+            return -10  -- very low, but keep in list with HOLD note
+        end
+    else
+        -- Criteria not complete — route to delve (moderate priority)
+        return 15
+    end
 end
 
 -- ============================================================

@@ -368,6 +368,8 @@ end
 
 -- Compact format for tight UI columns: "1h24m" instead of "1h 24m", "24m" not "24m 0s"
 function RS.Flight:FormatTimeCompact(seconds)
+    if not seconds or seconds ~= seconds then return "—" end
+    seconds = math.floor(seconds)
     if seconds < 60 then
         return seconds .. "s"
     elseif seconds < 3600 then

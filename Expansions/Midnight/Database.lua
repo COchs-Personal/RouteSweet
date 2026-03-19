@@ -280,45 +280,145 @@ function DB:GetPreyFeatures()
     }
 end
 
--- Returns the mapID of the zone where the player has an active prey quest,
--- or nil if no prey quest is active. Checks quest log for any prey quest
--- that is in-progress (accepted but not completed).
-function DB:GetActivePreyZone()
-    -- Check all prey quest IDs across all difficulties for one that's in the log
-    local allIDs = {}
-    for _, qID in ipairs(self.PREY.NORMAL_QUEST_IDS) do table.insert(allIDs, qID) end
-    for _, qID in ipairs(self.PREY.HARD_QUEST_IDS) do table.insert(allIDs, qID) end
-    for _, qID in ipairs(self.PREY.NIGHTMARE_QUEST_IDS) do table.insert(allIDs, qID) end
+-- ── PREY HUNT STATE (uses MagicPrey-discovered APIs) ────────
+-- C_QuestLog.GetActivePreyQuest()  → questID or nil
+-- C_UIWidgetManager.GetPowerBarWidgetSetID() → setID
+-- C_UIWidgetManager.GetAllWidgetsBySetID(setID)
+--   → look for widgetType == Enum.UIWidgetVisualizationType.PreyHuntProgress
+-- C_UIWidgetManager.GetPreyHuntProgressWidgetVisualizationInfo(widgetID)
+--   → { shownState, progressState, tooltip }
+-- progressState: Cold, Warm, Hot, Final/Found
 
-    for _, qID in ipairs(allIDs) do
-        local ok, onQuest = pcall(C_QuestLog.IsOnQuest, qID)
-        if ok and onQuest then
-            -- Quest is in the log — find which zone it's in
-            -- Try C_TaskQuest.GetQuestZoneID first
-            if C_TaskQuest and C_TaskQuest.GetQuestZoneID then
-                local ok2, zoneID = pcall(C_TaskQuest.GetQuestZoneID, qID)
-                if ok2 and zoneID and zoneID > 0 then return zoneID end
-            end
-            -- Fallback: check C_QuestLog for map info
-            if C_QuestLog and C_QuestLog.GetQuestsOnMap then
-                for _, mapID in ipairs({ 2395, 2437, 2413, 2405 }) do
-                    local ok3, quests = pcall(C_QuestLog.GetQuestsOnMap, mapID)
-                    if ok3 and quests then
-                        for _, qi in ipairs(quests) do
-                            if (qi.questID or qi.questId) == qID then
-                                return mapID
-                            end
-                        end
-                    end
-                end
-            end
-            -- If we found an active quest but can't determine zone,
-            -- return nil rather than guessing
-            return nil
+-- Cached prey widget ID (scanned once per session)
+DB._preyWidgetID = nil
+
+function DB:ScanPreyWidget()
+    self._preyWidgetID = nil
+    if not C_UIWidgetManager or not C_UIWidgetManager.GetPowerBarWidgetSetID then return end
+
+    local ok, setID = pcall(C_UIWidgetManager.GetPowerBarWidgetSetID)
+    if not ok or not setID then return end
+
+    local targetType = Enum and Enum.UIWidgetVisualizationType
+        and Enum.UIWidgetVisualizationType.PreyHuntProgress
+    if not targetType then return end
+
+    local ok2, widgets = pcall(C_UIWidgetManager.GetAllWidgetsBySetID, setID)
+    if not ok2 or not widgets then return end
+
+    for _, w in ipairs(widgets) do
+        if w.widgetType == targetType then
+            self._preyWidgetID = w.widgetID
+            return
+        end
+    end
+end
+
+-- Returns the active prey quest ID using the dedicated API,
+-- falling back to scanning quest IDs if the API doesn't exist.
+function DB:GetActivePreyQuest()
+    -- Preferred: direct API (12.0+)
+    if C_QuestLog.GetActivePreyQuest then
+        local ok, questID = pcall(C_QuestLog.GetActivePreyQuest)
+        if ok and questID and questID > 0 then
+            return questID
         end
     end
 
+    -- Fallback: scan known prey quest IDs
+    local allIDs = {}
+    for _, qID in ipairs(self.PREY.NORMAL_QUEST_IDS) do allIDs[#allIDs+1] = qID end
+    for _, qID in ipairs(self.PREY.HARD_QUEST_IDS) do allIDs[#allIDs+1] = qID end
+    for _, qID in ipairs(self.PREY.NIGHTMARE_QUEST_IDS) do allIDs[#allIDs+1] = qID end
+
+    for _, qID in ipairs(allIDs) do
+        local ok, onQuest = pcall(C_QuestLog.IsOnQuest, qID)
+        if ok and onQuest then return qID end
+    end
+
     return nil
+end
+
+-- Returns the mapID of the zone where the player has an active prey quest.
+function DB:GetActivePreyZone()
+    local questID = self:GetActivePreyQuest()
+    if not questID then return nil end
+
+    -- Try C_TaskQuest.GetQuestZoneID (works for prey quests)
+    if C_TaskQuest and C_TaskQuest.GetQuestZoneID then
+        local ok, zoneID = pcall(C_TaskQuest.GetQuestZoneID, questID)
+        if ok and zoneID and zoneID > 0 then return zoneID end
+    end
+
+    -- Fallback: walk up from player map to find zone-level map
+    local playerMap = C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
+    while playerMap do
+        local mapInfo = C_Map.GetMapInfo(playerMap)
+        if not mapInfo then break end
+        if mapInfo.mapType == (Enum and Enum.UIMapType and Enum.UIMapType.Zone) then
+            return playerMap
+        end
+        playerMap = mapInfo.parentMapID
+    end
+
+    return nil
+end
+
+-- Returns the current prey hunt state.
+-- { questID, questName, state, zone, isInZone, widgetTooltip }
+-- state: nil (no hunt), "Cold", "Warm", "Hot", "Final" (found!), "Away" (out of zone)
+function DB:GetPreyHuntState()
+    local questID = self:GetActivePreyQuest()
+    if not questID then return nil end
+
+    local questName = nil
+    pcall(function() questName = C_QuestLog.GetTitleForQuestID(questID) end)
+
+    local zoneID = self:GetActivePreyZone()
+
+    -- Scan for widget if not cached
+    if not self._preyWidgetID then
+        self:ScanPreyWidget()
+    end
+
+    -- Read widget state
+    if self._preyWidgetID and C_UIWidgetManager.GetPreyHuntProgressWidgetVisualizationInfo then
+        local ok, info = pcall(
+            C_UIWidgetManager.GetPreyHuntProgressWidgetVisualizationInfo,
+            self._preyWidgetID
+        )
+        if ok and info and info.shownState == 1 then
+            local state = "Cold"
+            local ps = info.progressState
+            if ps == (Enum.PreyHuntProgressState and Enum.PreyHuntProgressState.Final)
+                or ps == (Enum.PreyHuntProgressState and Enum.PreyHuntProgressState.Found) then
+                state = "Final"
+            elseif ps == (Enum.PreyHuntProgressState and Enum.PreyHuntProgressState.Hot) then
+                state = "Hot"
+            elseif ps == (Enum.PreyHuntProgressState and Enum.PreyHuntProgressState.Warm) then
+                state = "Warm"
+            end
+
+            return {
+                questID  = questID,
+                questName = questName,
+                state    = state,
+                zone     = zoneID,
+                isInZone = true,
+                tooltip  = info.tooltip,
+            }
+        end
+    end
+
+    -- Widget not showing — player is out of zone or widget not loaded
+    return {
+        questID  = questID,
+        questName = questName,
+        state    = "Away",
+        zone     = zoneID,
+        isInZone = false,
+        tooltip  = nil,
+    }
 end
 
 

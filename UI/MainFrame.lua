@@ -99,8 +99,24 @@ function RS.UI:Init()
     f:SetMovable(true)
     f:EnableMouse(true)
     f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
+    -- Foreground switching: both RS frames stay at DIALOG strata (plays nice
+    -- with bags, other addons, etc.). Clicking/dragging one raises it above
+    -- the other by bumping frame level. RS.RaiseFrame is shared with SettingsFrame.
+    RS._frameLevel = RS._frameLevel or 100
+    function RS.RaiseFrame(frame)
+        RS._frameLevel = RS._frameLevel + 2
+        frame:SetFrameLevel(RS._frameLevel)
+    end
+
+    f:SetScript("OnDragStart", function(self)
+        RS.RaiseFrame(self)
+        self:StartMoving()
+    end)
     f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    f:SetScript("OnMouseDown", function(self)
+        RS.RaiseFrame(self)
+    end)
+
     f:Hide()
 
     f:SetBackdrop({
@@ -393,9 +409,48 @@ function RS.UI:Init()
     -- Text label to the right of Arcantina icon
     local arcantinaLabel = toolBar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     arcantinaLabel:SetPoint("LEFT", arcantinaBtn, "RIGHT", 4, 0)
-    arcantinaLabel:SetWidth(90)
+    arcantinaLabel:SetWidth(60)
     arcantinaLabel:SetJustifyH("LEFT")
     self.arcantinaLabel = arcantinaLabel
+
+    -- ── GREAT VAULT BUTTON (toolbar row 2, after Arcantina) ──
+    local vaultBtn = CreateFrame("Button", "RSVaultBtn", toolBar)
+    vaultBtn:SetSize(ICON_SIZE + 6, ICON_SIZE + 6)
+    vaultBtn:SetPoint("RIGHT", toolBar, "RIGHT", 0, 0)
+    local vaultIcon = vaultBtn:CreateTexture(nil, "ARTWORK")
+    vaultIcon:SetAllPoints()
+    vaultIcon:SetAtlas("UI-Journeys-GreatVault-Button")
+    vaultBtn._icon = vaultIcon
+    -- Highlight on hover (inset to stay inside icon bounds)
+    local vaultHL = vaultBtn:CreateTexture(nil, "HIGHLIGHT")
+    vaultHL:SetPoint("TOPLEFT", 2, -2)
+    vaultHL:SetPoint("BOTTOMRIGHT", -2, 2)
+    vaultHL:SetColorTexture(1, 1, 1, 0.15)
+    -- Push feedback: slightly shrink icon on click
+    vaultBtn:SetScript("OnMouseDown", function(self)
+        self._icon:SetPoint("TOPLEFT", 1, -1)
+        self._icon:SetPoint("BOTTOMRIGHT", -1, 1)
+    end)
+    vaultBtn:SetScript("OnMouseUp", function(self)
+        self._icon:ClearAllPoints()
+        self._icon:SetAllPoints()
+    end)
+    vaultBtn:SetScript("OnClick", function()
+        C_AddOns.LoadAddOn("Blizzard_WeeklyRewards")
+        if WeeklyRewardsFrame and WeeklyRewardsFrame:IsShown() then
+            WeeklyRewardsFrame:Hide()
+        elseif WeeklyRewardsFrame then
+            WeeklyRewardsFrame:Show()
+        end
+    end)
+    vaultBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Great Vault", 1, 0.82, 0.27)
+        GameTooltip:AddLine("Click to open the Great Vault preview.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    vaultBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    self.vaultBtn = vaultBtn
 
     -- ── COLUMN HEADERS ────────────────────────────────────────
     local headers = CreateFrame("Frame", nil, f, "BackdropTemplate")
@@ -421,18 +476,17 @@ function RS.UI:Init()
 
     -- ── SCROLL FRAME ─────────────────────────────────────────
     -- UIPanelScrollFrameTemplate places its 20px scrollbar flush to the right
-    -- edge of the ScrollFrame itself. We position the ScrollFrame with 4px left
-    -- margin and 4px right margin inside the main frame; the scrollbar then sits
-    -- in that right margin area. Net visible content = FRAME_W - 4 - 4 - 20 = 392px.
+    -- edge of the ScrollFrame itself. We leave 24px on the right (4px margin +
+    -- 20px scrollbar) so the scrollbar sits inside the main frame border.
     local scrollFrame = CreateFrame("ScrollFrame", "RSScrollFrame", f, "UIPanelScrollFrameTemplate")
     scrollFrame:SetPoint("TOPLEFT",     f, "TOPLEFT",     4, -36 - (ICON_SIZE + 2) * 2 - 8 - 18 - 2)
-    scrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -4, 60)
+    scrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -24, 60)
     self.scrollFrame = scrollFrame
 
-    -- scrollChild width = scrollFrame width minus the 20px scrollbar reserved on right.
-    -- This makes rows span the full visible content area with no gap.
+    -- scrollChild width = scrollFrame width (FRAME_W - 4 left - 24 right = 392px).
+    -- Rows span the full scrollChild; scrollbar is outside the scrollFrame to the right.
     local scrollChild = CreateFrame("Frame", "RSScrollChild", scrollFrame)
-    scrollChild:SetSize(FRAME_W - 24, 1)   -- 420 - 4 left - 20 scrollbar = 396
+    scrollChild:SetSize(FRAME_W - 28, 1)   -- 420 - 4 left - 24 right = 392
     scrollFrame:SetScrollChild(scrollChild)
     self.scrollChild = scrollChild
     self.rowFrames = {}
@@ -616,13 +670,14 @@ function RS.UI:GetOrCreateRow(index)
 
         -- Index number
         row.indexText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        row.indexText:SetPoint("LEFT", row, "LEFT", 6, 8)
-        row.indexText:SetWidth(16)
+        row.indexText:SetPoint("LEFT", row, "LEFT", 4, 8)
+        row.indexText:SetWidth(24)
+        row.indexText:SetJustifyH("RIGHT")
 
         -- Activity name (truncated with ellipsis in Refresh; tooltip shows full name)
         row.nameText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        row.nameText:SetPoint("TOPLEFT", row, "TOPLEFT", 26, -8)
-        row.nameText:SetWidth(130)
+        row.nameText:SetPoint("TOPLEFT", row, "TOPLEFT", 32, -8)
+        row.nameText:SetWidth(124)
         row.nameText:SetJustifyH("LEFT")
 
         -- Notes / portal subtext
@@ -945,7 +1000,7 @@ function RS.UI:Refresh()
         row:Hide()
     end
 
-    if not route or #route.stops == 0 then
+    if not route or not route.stops or #route.stops == 0 then
         self.timeLabel:SetText("No activities found")
         self.scrollChild:SetHeight(60)
         return
@@ -1040,7 +1095,51 @@ function RS.UI:Refresh()
     -- Update total time in toolbar
     local totalStr = RS.Flight:FormatTimeCompact(route.totalSecs)
     local travelStr = RS.Flight:FormatTimeCompact(route.totalTravelSecs)
-    self.timeLabel:SetText(string.format("|cffC8A96E%s|r  (%s travel)", totalStr, travelStr))
+    -- Append warband XP bonus for leveling characters
+    local warbandNote = ""
+    local activeExps = RS.Expansion._active or {}
+    for _, expName in ipairs(activeExps) do
+        if expName == "Leveling" then
+            local exp = RS.Expansion:GetExpansion("Leveling")
+            if exp and exp.db and exp.db.GetWarbandXPBonus then
+                local bonus = exp.db:GetWarbandXPBonus()
+                if bonus > 0 then
+                    warbandNote = string.format("  |cff88ff88+%d%% WB XP|r", bonus)
+                end
+            end
+            break
+        end
+    end
+    self.timeLabel:SetText(string.format("|cffC8A96E%s|r  (%s travel)%s", totalStr, travelStr, warbandNote))
+
+    -- Update footer: show prey hunt state if active, else default help text
+    if self.footerText then
+        local preyText = nil
+        if RS.DB and RS.DB.GetPreyHuntState then
+            local hunt = RS.DB:GetPreyHuntState()
+            if hunt then
+                local stateColors = {
+                    Cold  = "6688cc",
+                    Warm  = "ff8800",
+                    Hot   = "ff0000",
+                    Final = "00ff00",
+                    Away  = "999999",
+                }
+                local stateLabels = {
+                    Cold  = "Cold",
+                    Warm  = "Warm",
+                    Hot   = "Hot!",
+                    Final = "FOUND!",
+                    Away  = "Away",
+                }
+                local c = stateColors[hunt.state] or "888888"
+                local l = stateLabels[hunt.state] or hunt.state
+                local zoneName = hunt.zone and RS.Zones:GetZoneName(hunt.zone) or "?"
+                preyText = string.format("Prey: |cff%s%s|r  (%s)", c, l, zoneName)
+            end
+        end
+        self.footerText:SetText(preyText or "Left-click: Set waypoint  |  Right-click: Mark done")
+    end
 
     -- Re-apply active stop highlight and progress bar after refresh
     local curIdx = RS.Waypoint.GetCurrent and RS.Waypoint:GetCurrent()

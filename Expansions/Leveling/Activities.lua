@@ -274,6 +274,51 @@ leveling.BuildDynamicActivities = function(enabledTypes)
         scanBonusObjectives(mapID, seen, results)
     end
 
+    -- ── DELVER'S CALL QUESTS ───────────────────────────────
+    -- These are in the quest log (not map-discovered). Add special handling.
+    local delversCall = DB:GetDelversCallStatus()
+    local playerLevel = UnitLevel("player") or 80
+    for _, dc in ipairs(delversCall) do
+        if not seen[dc.questID] then
+            seen[dc.questID] = true
+            local score = DB:ScoreDelversCall(dc.questID, dc.isComplete)
+            local holdNote = ""
+            if dc.isComplete and playerLevel < DB.DELVERS_CALL_TURNIN_LEVEL then
+                holdNote = " |cffff8800[HOLD — turn in at " .. DB.DELVERS_CALL_TURNIN_LEVEL .. "]|r"
+            elseif dc.isComplete and playerLevel >= DB.DELVERS_CALL_TURNIN_LEVEL then
+                holdNote = " |cff00ff00[TURN IN NOW]|r"
+            end
+
+            -- Delver's Call quests don't have map coords — use Silvermoon turn-in
+            -- or the delve entrance if criteria incomplete
+            local mapID = 2393  -- Silvermoon (turn-in NPC)
+            local x, y = 0.5, 0.5
+            if not dc.isComplete then
+                -- Route to any delve entrance in current zones
+                -- (the quest auto-tracks to the right delve)
+                mapID = nil  -- will be set by the quest tracker
+            end
+
+            table.insert(results, {
+                id           = "lv_dc_" .. dc.questID,
+                questID      = dc.questID,
+                name         = dc.title .. holdNote,
+                mapID        = mapID or 2393,
+                x            = x,
+                y            = y,
+                type         = "CALLING",
+                duration     = dc.isComplete and 30 or 480,  -- turn-in is fast, doing the delve is ~8min
+                rewards      = { "xp" },
+                xpReward     = DB:GetQuestXP(dc.questID),
+                score        = score,
+                priority     = dc.isComplete and (playerLevel >= DB.DELVERS_CALL_TURNIN_LEVEL and 10 or 1) or 6,
+                notes        = "Delver's Call" .. holdNote,
+                inProgress   = true,
+                isDelversCall = true,
+            })
+        end
+    end
+
     -- Also scan the player's current map if it's not in the scan list
     -- (handles being in a sub-zone or instance entrance area)
     local playerMapID = C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")

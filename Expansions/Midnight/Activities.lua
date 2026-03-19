@@ -274,6 +274,40 @@ midnight.BuildDynamicActivities = function(enabledTypes)
                 end
             end
         end
+
+        -- Delve boss: Nulling Nullaeus (quest 93525)
+        -- Only show if player has completed a T8+ delve (vault evidence)
+        local QUEST_NULLAEUS = 93525
+        local nullDone = false
+        pcall(function() nullDone = C_QuestLog.IsQuestFlaggedCompleted(QUEST_NULLAEUS) end)
+        if not nullDone then
+            local hasT8 = false
+            if C_WeeklyRewards and C_WeeklyRewards.GetActivities then
+                local ok, acts = pcall(C_WeeklyRewards.GetActivities)
+                if ok and acts then
+                    for _, act in ipairs(acts) do
+                        if act.type == 3 and (act.level or 0) >= 8 then
+                            hasT8 = true
+                            break
+                        end
+                    end
+                end
+            end
+            if hasT8 then
+                table.insert(nodes, {
+                    id       = "delve_boss_nullaeus",
+                    name     = "Nulling Nullaeus",
+                    mapID    = RS.Zones.MAP_IDS.SILVERMOON or 2393,
+                    x        = 0.5, y = 0.5,
+                    type     = "DELVE",
+                    duration = 15 * 60,
+                    rewards  = { "gear" },
+                    priority = 3,
+                    notes    = "Weekly delve boss. Requires Tier 8+ delve.",
+                    questID  = QUEST_NULLAEUS,
+                })
+            end
+        end
     end
 
     -- Rare mobs (unkilled this week)
@@ -385,4 +419,20 @@ midnight.BuildDynamicActivities = function(enabledTypes)
     end
 
     return nodes
+end
+
+-- Quest IDs handled by static/gated data that the dynamic scanner should skip.
+midnight.GetExcludedQuestIDs = function()
+    local ids = {
+        [DB.DELVES.NULLAEUS] = true,  -- Nulling Nullaeus (delve boss, T8 gated)
+    }
+    -- Great Vault quest (94474): only show when rewards are pending
+    local hasRewards = false
+    if C_WeeklyRewards and C_WeeklyRewards.HasAvailableRewards then
+        pcall(function() hasRewards = C_WeeklyRewards.HasAvailableRewards() end)
+    end
+    if not hasRewards then
+        ids[94474] = true
+    end
+    return ids
 end

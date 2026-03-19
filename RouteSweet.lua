@@ -163,6 +163,7 @@ frame:RegisterEvent("UNIT_AURA")
 frame:RegisterEvent("PLAYER_REGEN_DISABLED")   -- entering combat
 frame:RegisterEvent("PLAYER_REGEN_ENABLED")    -- leaving combat
 frame:RegisterEvent("TOYS_UPDATED")            -- toy collection loaded/changed
+frame:RegisterEvent("UPDATE_UI_WIDGET")        -- prey crystal state changes
 
 -- Track whether we hid the UI on combat entry so we can restore it
 local _hiddenForCombat = false
@@ -198,6 +199,17 @@ frame:SetScript("OnEvent", function(self, event, ...)
                     RS_Settings.detectedFlightMode = mode
                     RS_Settings.useSkyriding = (mode == "skyriding")
                 end
+            end
+        end
+
+    elseif event == "UPDATE_UI_WIDGET" then
+        -- Prey crystal state changed — refresh footer display
+        if not RS._expansionActive then return end
+        local widgetInfo = ...
+        if widgetInfo and RS.DB and RS.DB._preyWidgetID
+            and widgetInfo.widgetID == RS.DB._preyWidgetID then
+            if RS.UI and RS.UI.isOpen and RS.UI.Refresh then
+                RS.UI:Refresh()
             end
         end
 

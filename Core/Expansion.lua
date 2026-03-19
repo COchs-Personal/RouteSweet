@@ -211,6 +211,22 @@ function E:BuildDynamicActivities(enabledTypes)
     return all
 end
 
+-- Returns a set of quest IDs that should be excluded from the dynamic
+-- world quest scanner (handled by static expansion data instead).
+function E:GetExcludedQuestIDs()
+    local ids = {}
+    for _, name in ipairs(self._active or {}) do
+        local exp = self._registered[name]
+        if exp and exp.GetExcludedQuestIDs then
+            local expIDs = exp.GetExcludedQuestIDs()
+            if expIDs then
+                for qID in pairs(expIDs) do ids[qID] = true end
+            end
+        end
+    end
+    return ids
+end
+
 -- Returns the hub map ID of the primary active expansion (used as fallback
 -- when player position is unknown).
 function E:GetHubMapID()

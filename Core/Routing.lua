@@ -13,20 +13,45 @@ RS.Router = RS.Router or {}
 -- COST MATRIX
 -- Pre-compute travel time (seconds) between every pair of activities
 -- ============================================================
+-- Returns two matrices: routing (with zone preference bias) and display (actual times)
 function RS.Router:BuildCostMatrix(activities)
     local n = #activities
-    local matrix = {}
+    local routingMatrix = {}
+    local displayMatrix = {}
+
+    -- Zone preference cost modifier for routing only
+    local zonePrefs = nil
+    local profile = RS.GetActiveProfile and RS:GetActiveProfile()
+    if profile and profile.zonePreferences then
+        zonePrefs = profile.zonePreferences
+    end
+    local PREFER_BONUS = 180  -- seconds subtracted from travel to preferred zones
+    local AVOID_PENALTY = 180 -- seconds added to travel to avoided zones
+
     for i = 1, n do
-        matrix[i] = {}
+        routingMatrix[i] = {}
+        displayMatrix[i] = {}
         for j = 1, n do
             if i == j then
-                matrix[i][j] = 0
+                routingMatrix[i][j] = 0
+                displayMatrix[i][j] = 0
             else
-                matrix[i][j] = RS.Flight:TravelTimeBetween(activities[i], activities[j])
+                local cost = RS.Flight:TravelTimeBetween(activities[i], activities[j])
+                displayMatrix[i][j] = cost
+                -- Apply zone preference bias to routing matrix only
+                if zonePrefs and activities[j].mapID then
+                    local pref = zonePrefs[activities[j].mapID]
+                    if pref == "prefer" then
+                        cost = math.max(1, cost - PREFER_BONUS)
+                    elseif pref == "avoid" then
+                        cost = cost + AVOID_PENALTY
+                    end
+                end
+                routingMatrix[i][j] = cost
             end
         end
     end
-    return matrix
+    return routingMatrix, displayMatrix
 end
 
 -- ============================================================
@@ -229,14 +254,14 @@ function RS.Router:BuildRoute(activities, playerMapID, playerX, playerY)
         end
     end
 
-    -- 2. Build cost matrix
-    local costMatrix = self:BuildCostMatrix(activities)
+    -- 2. Build cost matrices (routing has zone pref bias, display has real times)
+    local routingMatrix, displayMatrix = self:BuildCostMatrix(activities)
 
-    -- 3. Nearest-neighbour greedy tour
-    local tour = self:NearestNeighbour(activities, costMatrix, startIndex)
+    -- 3. Nearest-neighbour greedy tour (uses biased routing matrix)
+    local tour = self:NearestNeighbour(activities, routingMatrix, startIndex)
 
-    -- 4. 2-opt improvement
-    tour = self:TwoOpt(tour, costMatrix)
+    -- 4. 2-opt improvement (uses biased routing matrix)
+    tour = self:TwoOpt(tour, routingMatrix)
 
     -- 5. Portal zone batching
     tour = self:BatchPortalZones(tour, activities)
@@ -340,15 +365,33 @@ function RS.Router:BuildRoute(activities, playerMapID, playerX, playerY)
                         and not s.hearthOnCooldown
                         and portalZones[toID]
 
+                    local hubID = RS.Expansion:GetHubMapID() or 2393
+                    local hubName = RS.Zones:GetZoneName(hubID)
                     local destName = RS.Zones:GetZoneName(toID)
+
+                    -- Check if the hub → destination leg is a direct fly (no portal)
+                    local hubConn = RS.Zones.CONNECTIVITY and RS.Zones.CONNECTIVITY[hubID]
+                    local hubToDestFly = false
+                    if hubConn then
+                        for _, nb in ipairs(hubConn.neighbors) do
+                            if nb.mapID == toID and not nb.portalRequired then
+                                hubToDestFly = true
+                                break
+                            end
+                        end
+                    end
+
                     if useArcantina and useHearth then
                         portalNote = "\226\134\146 Arcantina Key + Hearth \226\134\146 " .. destName
                     elseif useArcantina then
-                        portalNote = "\226\134\146 Arcantina Key \226\134\146 Silvermoon \226\134\146 " .. destName
+                        portalNote = "\226\134\146 Arcantina Key \226\134\146 " .. hubName
                     elseif useHearth then
-                        portalNote = "\226\134\146 Hearth \226\134\146 Silvermoon \226\134\146 " .. destName
+                        portalNote = "\226\134\146 Hearth \226\134\146 " .. hubName
+                    elseif hubToDestFly then
+                        -- Hub → destination is just flying, only need portal to hub
+                        portalNote = "\226\134\146 Portal to " .. hubName
                     else
-                        portalNote = "\226\134\146 Portal via " .. RS.Zones:GetZoneName(RS.Expansion:GetHubMapID() or 2393)
+                        portalNote = "\226\134\146 Portal via " .. hubName
                     end
 
                     -- Portal waypoint at the hub's portal to the destination
@@ -432,6 +475,56 @@ function RS:BuildRoute()
     local pX = playerPos and playerPos.x or 0.5
     local pY = playerPos and playerPos.y or 0.5
 
-    RS.currentRoute = RS.Router:BuildRoute(activities, playerMapID, pX, pY)
+    -- Check for "First" zones — partition activities into First and non-First groups
+    local profile = RS.GetActiveProfile and RS:GetActiveProfile()
+    local zoneFirst = profile and profile.zoneFirst
+    local hasFirst = false
+    if zoneFirst then
+        for _, v in pairs(zoneFirst) do
+            if v then hasFirst = true; break end
+        end
+    end
+
+    if hasFirst then
+        -- Partition: First-zone activities routed first, then the rest
+        local firstActs, restActs = {}, {}
+        for _, act in ipairs(activities) do
+            if zoneFirst[act.mapID] then
+                table.insert(firstActs, act)
+            else
+                table.insert(restActs, act)
+            end
+        end
+
+        -- Route First zones from player position
+        local r1 = { stops = {} }
+        if #firstActs > 0 then
+            r1 = RS.Router:BuildRoute(firstActs, playerMapID, pX, pY)
+        end
+        local stops1 = r1.stops or {}
+
+        -- Route remaining zones from the last First-zone stop
+        local r2 = { stops = {} }
+        if #restActs > 0 then
+            local lastMapID, lastX, lastY = playerMapID, pX, pY
+            if #stops1 > 0 then
+                local last = stops1[#stops1]
+                lastMapID = last.mapID or playerMapID
+                lastX = last.x or 0.5
+                lastY = last.y or 0.5
+            end
+            r2 = RS.Router:BuildRoute(restActs, lastMapID, lastX, lastY)
+        end
+        local stops2 = r2.stops or {}
+
+        -- Concatenate: First zones then rest
+        local combined = {}
+        for _, act in ipairs(stops1) do table.insert(combined, act) end
+        for _, act in ipairs(stops2) do table.insert(combined, act) end
+        RS.currentRoute = { stops = combined }
+    else
+        RS.currentRoute = RS.Router:BuildRoute(activities, playerMapID, pX, pY)
+    end
+
     return RS.currentRoute
 end

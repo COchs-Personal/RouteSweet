@@ -141,6 +141,13 @@ function RS.Scanner:ScanWorldQuests()
 
     local seen = {}  -- deduplicate quests that appear on multiple zone maps
 
+    -- Exclude quest IDs handled by static expansion data (e.g. delve boss quests)
+    -- so the dynamic scanner doesn't add duplicates or ungated entries.
+    local excluded = {}
+    if RS.Expansion and RS.Expansion.GetExcludedQuestIDs then
+        excluded = RS.Expansion:GetExcludedQuestIDs()
+    end
+
     -- Two quest sources, scanned per zone + child zones:
     -- 1. C_TaskQuest — world quests, bonus objectives, task quests
     --    Returns empty until player has viewed the zone in Map UI.
@@ -189,7 +196,7 @@ function RS.Scanner:ScanWorldQuests()
         for _, questInfo in ipairs(quests) do
             -- 11.0.5+ uses questID (uppercase D); pre-11.0.5 used questId (lowercase d)
             local qID = questInfo.questID or questInfo.questId
-            if qID and not seen[qID] then
+            if qID and not seen[qID] and not excluded[qID] then
 
                 local completed = false
                 pcall(function() completed = C_QuestLog.IsQuestFlaggedCompleted(qID) end)
@@ -390,10 +397,17 @@ function RS.Scanner:GetActiveAbundanceCave()
                 local x = info.position and info.position.x or 0.5
                 local y = info.position and info.position.y or 0.5
 
-                -- Try to get time remaining from the POI
+                -- Time remaining: try POI first, fall back to 8hr rotation math
                 local timeLeft = nil
                 if info.secondsLeft and info.secondsLeft > 0 then
                     timeLeft = info.secondsLeft
+                else
+                    -- Abundance caves rotate every 8 hours at 7:00, 15:00, 23:00 UTC.
+                    local ROTATION_SECS = 8 * 3600  -- 8 hours
+                    local EPOCH_OFFSET  = 25200     -- 7h offset from UTC epoch
+                    local now = GetServerTime()
+                    local elapsed = (now - EPOCH_OFFSET) % ROTATION_SECS
+                    timeLeft = ROTATION_SECS - elapsed
                 end
 
                 local suffix = isHarvest and " |cffff8800[HARVEST]|r" or " |cff00ff00[ACTIVE]|r"
@@ -463,14 +477,17 @@ function RS.Scanner:ScoreActivity(activity)
     score = score + activityPositionBonus(activity.type)
 
     -- Zone preference modifier (prefer/avoid zones for variety)
+    -- Values are deliberately large: they multiply by SCORE_SECS_PER_POINT (8s)
+    -- in the TSP solver, so +40 = 320s travel credit, -40 = 320s penalty.
+    -- This is enough to overcome Silvermoon→Eversong proximity advantage.
     if activity.mapID then
         local profile = RS:GetActiveProfile()
         if profile and profile.zonePreferences then
             local pref = profile.zonePreferences[activity.mapID]
             if pref == "prefer" then
-                score = score + 20
+                score = score + 40
             elseif pref == "avoid" then
-                score = score - 20
+                score = score - 40
             end
         end
     end

@@ -128,6 +128,7 @@ end
 local function makeScrollFrame(parent, w, h)
     local sf = CreateFrame("ScrollFrame", nil, parent)
     sf:SetSize(w, h)
+    sf:SetClipsChildren(true)
     local child = CreateFrame("Frame", nil, sf)
     child:SetSize(w, 1)
     sf:SetScrollChild(child)
@@ -178,6 +179,16 @@ end
 -- yOffset: pixels from cont top to start first row (always 0 for us).
 -- Returns total pixel height consumed.
 -- ============================================================
+-- Find an entry's real index in the full (unfiltered) profile list by ID.
+-- The display list may be filtered (rewards), so visual index i may
+-- not match the profile list index.
+local function findRealIndex(tgt, entryId)
+    for ri = 1, #tgt do
+        if tgt[ri].id == entryId then return ri end
+    end
+    return nil
+end
+
 local function buildWeightRows(settings, listKey, cont, rowsTable, list, isLocked, yOffset)
     for _, r in ipairs(rowsTable) do r:Hide() end
     wipe(rowsTable)
@@ -269,16 +280,6 @@ local function buildWeightRows(settings, listKey, cont, rowsTable, list, isLocke
                     if RS.UI.Refresh then RS.UI:Refresh() end
                 end
             end)
-
-            -- Find this entry's real index in the full (unfiltered) profile list.
-            -- The display list may be filtered (rewards), so visual index i may
-            -- not match the profile list index.
-            local function findRealIndex(tgt, entryId)
-                for ri = 1, #tgt do
-                    if tgt[ri].id == entryId then return ri end
-                end
-                return nil
-            end
 
             upBtn:SetScript("OnClick", function()
                 local p = getEditableProfile()
@@ -416,6 +417,7 @@ end
 RS.Settings.viewedProfile = nil
 RS.Settings.actOpen       = true
 RS.Settings.rewOpen       = true
+RS.Settings.zoneOpen      = false
 
 function RS.Settings:Init()
     if self.frame then return end
@@ -428,8 +430,14 @@ function RS.Settings:Init()
     f:SetMovable(true)
     f:EnableMouse(true)
     f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStart", function(self)
+        if RS.RaiseFrame then RS.RaiseFrame(self) end
+        self:StartMoving()
+    end)
     f:SetScript("OnDragStop",  f.StopMovingOrSizing)
+    f:SetScript("OnMouseDown", function(self)
+        if RS.RaiseFrame then RS.RaiseFrame(self) end
+    end)
     f:Hide()
     f:SetBackdrop({
         bgFile   = "Interface\\Buttons\\WHITE8x8",
@@ -629,6 +637,23 @@ function RS.Settings:Init()
     rewCont:SetHeight(1)
     self.rewCont = rewCont
     self.rewRows = {}
+
+    -- ── ZONE PREFERENCES SECTION ────────────────────────────
+    local zoneHdr = makeSectionHeader(rightChild, "Zone Preferences", self.zoneOpen,
+        function(isOpen)
+            RS.Settings.zoneOpen = isOpen
+            RS.Settings:RefreshWeights()
+        end)
+    zoneHdr:SetPoint("TOPLEFT",  rewCont, "BOTTOMLEFT",  0, -4)
+    zoneHdr:SetPoint("TOPRIGHT", rewCont, "BOTTOMRIGHT", 0, -4)
+    self.zoneHdr = zoneHdr
+
+    local zoneCont = CreateFrame("Frame", nil, rightChild)
+    zoneCont:SetPoint("TOPLEFT",  zoneHdr, "BOTTOMLEFT",  0, 0)
+    zoneCont:SetPoint("TOPRIGHT", zoneHdr, "BOTTOMRIGHT", 0, 0)
+    zoneCont:SetHeight(1)
+    self.zoneCont = zoneCont
+    self.zoneRows = {}
 
     -- ── NAME ENTRY POPUP ─────────────────────────────────────
     local namePopup = CreateFrame("Frame", nil, f, "BackdropTemplate")
@@ -902,8 +927,145 @@ function RS.Settings:RefreshWeights()
     self.rewCont:SetPoint("TOPRIGHT", self.rewHdr, "BOTTOMRIGHT", 0, 0)
     self.rewCont:SetHeight(math.max(rewH, 1))
 
-    -- Total scroll child height
-    local totalH = SEC_H + actH + 4 + SEC_H + rewH + 8
+    -- Reanchor zone header below reward content
+    self.zoneHdr:ClearAllPoints()
+    self.zoneHdr:SetPoint("TOPLEFT",  self.rewCont, "BOTTOMLEFT",  0, -4)
+    self.zoneHdr:SetPoint("TOPRIGHT", self.rewCont, "BOTTOMRIGHT", 0, -4)
+
+    -- Zone preference rows
+    local zoneH = 0
+    for _, r in ipairs(self.zoneRows) do r:Hide() end
+    wipe(self.zoneRows)
+
+    if self.zoneOpen then
+        local ZONE_ROW_H = ROW_H or 28
+        local scanZones = RS.Expansion:GetAllScanZoneIDs()
+        -- Exclude hub zones (Silvermoon, Arcantina) — only routable quest zones
+        local hubZones = { [2393] = true, [2541] = true }
+        local zones = {}
+        local seen = {}
+        for _, mapID in ipairs(scanZones) do
+            if not hubZones[mapID] and not seen[mapID] then
+                seen[mapID] = true
+                table.insert(zones, mapID)
+            end
+        end
+
+        for zi, mapID in ipairs(zones) do
+            local row = CreateFrame("Frame", nil, self.zoneCont)
+            row:SetHeight(ZONE_ROW_H)
+            row:SetPoint("TOPLEFT",  self.zoneCont, "TOPLEFT",  0, -(zi-1)*ZONE_ROW_H)
+            row:SetPoint("TOPRIGHT", self.zoneCont, "TOPRIGHT", 0, -(zi-1)*ZONE_ROW_H)
+
+            setBG(row,
+                zi%2==1 and C.ROW_ODD[1] or C.ROW_EVEN[1],
+                zi%2==1 and C.ROW_ODD[2] or C.ROW_EVEN[2],
+                zi%2==1 and C.ROW_ODD[3] or C.ROW_EVEN[3])
+
+            local zoneName = RS.Zones:GetZoneName(mapID) or ("Zone " .. mapID)
+            local lbl = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            lbl:SetPoint("LEFT", row, "LEFT", 8, 0)
+            lbl:SetWidth(160)
+            lbl:SetJustifyH("LEFT")
+            lbl:SetText(zoneName)
+
+            -- "First" checkbox — forces this zone to top of route order
+            local firstCB = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+            firstCB:SetSize(20, 20)
+            firstCB:SetPoint("RIGHT", row, "RIGHT", -90, 0)
+            local isFirst = profile.zoneFirst and profile.zoneFirst[mapID] or false
+            firstCB:SetChecked(isFirst)
+
+            local firstLbl = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            firstLbl:SetPoint("RIGHT", firstCB, "LEFT", -2, 0)
+            firstLbl:SetText("|cffC8A96EFirst|r")
+
+            if isDefault then
+                firstCB:Disable()
+                firstCB:SetAlpha(0.3)
+            else
+                firstCB:SetScript("OnClick", function(self)
+                    local p = getEditableProfile()
+                    if not p then return end
+                    if not p.zoneFirst then p.zoneFirst = {} end
+                    p.zoneFirst[mapID] = self:GetChecked() or nil
+                    RS:BuildRoute()
+                    if RS.UI.Refresh then RS.UI:Refresh() end
+                end)
+            end
+
+            firstCB:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetText("Route First", 1, 0.82, 0.27)
+                GameTooltip:AddLine("When checked, activities in this zone are routed", 0.8, 0.8, 0.8, true)
+                GameTooltip:AddLine("before all non-First zones. Within First zones,", 0.8, 0.8, 0.8, true)
+                GameTooltip:AddLine("Prefer/Avoid and TSP still apply.", 0.8, 0.8, 0.8, true)
+                GameTooltip:Show()
+            end)
+            firstCB:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+            -- 3-state cycle button: Normal → Prefer → Avoid
+            local pref = (profile.zonePreferences and profile.zonePreferences[mapID]) or "normal"
+            local stateBtn = CreateFrame("Button", nil, row)
+            stateBtn:SetSize(80, 18)
+            stateBtn:SetPoint("RIGHT", row, "RIGHT", -8, 0)
+
+            local stateTxt = stateBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            stateTxt:SetPoint("CENTER")
+
+            local function updateZoneBtn(state)
+                if state == "prefer" then
+                    stateTxt:SetText("|cff00ff00Prefer|r")
+                    lbl:SetTextColor(0.2, 1, 0.2)
+                elseif state == "avoid" then
+                    stateTxt:SetText("|cffff4444Avoid|r")
+                    lbl:SetTextColor(1, 0.3, 0.3)
+                else
+                    stateTxt:SetText("|cff888888Normal|r")
+                    lbl:SetTextColor(1, 1, 0.95)
+                end
+            end
+            updateZoneBtn(pref)
+
+            stateBtn:SetScript("OnClick", function()
+                if isDefault then return end
+                local p = getEditableProfile()
+                if not p then return end
+                if not p.zonePreferences then p.zonePreferences = {} end
+                local cur = p.zonePreferences[mapID] or "normal"
+                local next
+                if cur == "normal" then next = "prefer"
+                elseif cur == "prefer" then next = "avoid"
+                else next = "normal" end
+                p.zonePreferences[mapID] = next
+                updateZoneBtn(next)
+                RS:BuildRoute()
+                if RS.UI.Refresh then RS.UI:Refresh() end
+            end)
+
+            -- Tooltip
+            stateBtn:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetText("Zone Priority", 1, 0.82, 0.27)
+                GameTooltip:AddLine("Click to cycle: Normal → Prefer → Avoid", 0.8, 0.8, 0.8, true)
+                GameTooltip:AddLine("Prefer: +20 score to all activities in this zone.", 0.2, 1, 0.2, true)
+                GameTooltip:AddLine("Avoid: -20 score to all activities in this zone.", 1, 0.3, 0.3, true)
+                GameTooltip:Show()
+            end)
+            stateBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+            table.insert(self.zoneRows, row)
+            zoneH = zoneH + ZONE_ROW_H
+        end
+    end
+
+    self.zoneCont:ClearAllPoints()
+    self.zoneCont:SetPoint("TOPLEFT",  self.zoneHdr, "BOTTOMLEFT",  0, 0)
+    self.zoneCont:SetPoint("TOPRIGHT", self.zoneHdr, "BOTTOMRIGHT", 0, 0)
+    self.zoneCont:SetHeight(math.max(zoneH, 1))
+
+    -- Total scroll child height (genH + 4 sections: general, activity, reward, zone)
+    local totalH = SEC_H + genH + 4 + SEC_H + actH + 4 + SEC_H + rewH + 4 + SEC_H + zoneH + 8
     self.rightChild:SetHeight(math.max(totalH, 1))
 
     -- Clamp scroll position
