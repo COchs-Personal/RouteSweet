@@ -2,7 +2,7 @@
 ## Title: RouteSweet
 ## Notes: Shortest-path route planner for Midnight world quests, events, weeklies, and leveling content. Accounts for Skyriding vs static flight, portal zones, travel tools, XP-weighted routing, and personal per-activity timing averages.
 ## Author: YourName
-## Version: v0.0.2
+## Version: v0.0.3
 ## SavedVariables: RS_Settings
 ## SavedVariablesPerCharacter: RS_CharData, RS_DumpData
 ## IconTexture: Interface\AddOns\RouteSweet\Textures\MinimapIcon

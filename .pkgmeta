@@ -1,6 +1,0 @@
-package-as: RouteSweet
-
-ignore:
-  - README.md
-  - .github
-  - LICENSE
