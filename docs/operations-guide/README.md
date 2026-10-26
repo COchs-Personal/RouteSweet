@@ -49,3 +49,5 @@ Edition 26 October 2026. Repository COchs-Personal/RouteSweet. Inspected source 
 Source files: [README.md](https://github.com/COchs-Personal/RouteSweet/blob/468d396d6f8c069741eaccb5c443ea75df086603/README.md).
 
 [Editable Word edition](Operations_Guide.docx) | [PDF edition](Operations_Guide.pdf)
+
+For architecture, code-level explanations, worked change recipes, and detailed recovery, use the [development handbook](../development-handbook/README.md).

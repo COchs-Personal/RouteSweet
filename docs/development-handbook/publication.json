@@ -1,0 +1,38 @@
+{
+  "title": "RouteSweet Development Handbook",
+  "subtitle": "Architecture usage troubleshooting and continuing development",
+  "running_title": "RouteSweet Development Handbook",
+  "date": "26 October 2026",
+  "subject": "Standalone source-grounded project architecture and development reference",
+  "introduction": [
+    "This handbook explains the project from everyday use to the code and data that implement it. Use it to set up a development checkout, follow a request or document through the system, locate the right extension point, make a change, and verify the result.",
+    "Begin with the project overview and architecture. The later chapters provide exact local commands, user journeys, worked development examples, diagnostics, recovery steps, known gaps, and a pinned source reference. Technical terms are explained where they are used.",
+    "The documented source is COchs-Personal/RouteSweet at b5ef1dc889ba471878ddf22db3683d33614b1858. Source-defined behavior, observed evidence, planned capabilities, and remaining platform work are distinguished. The quick operations guide remains a separate short reference."
+  ],
+  "groups": [
+    [
+      "Understand the project",
+      [
+        "01-understand-the-project",
+        "02-architecture"
+      ]
+    ],
+    [
+      "Use and develop the project",
+      [
+        "03-local-development",
+        "04-using-and-running",
+        "05-developing-and-testing"
+      ]
+    ],
+    [
+      "Diagnose improve and verify",
+      [
+        "06-gaps-and-recovery",
+        "07-source-reference"
+      ]
+    ]
+  ],
+  "paragraph_spacing_after": 5,
+  "continuous_chapters": true
+}
