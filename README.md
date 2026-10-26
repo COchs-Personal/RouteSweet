@@ -183,3 +183,7 @@ If you discover additional IDs (e.g. future patch weeklies), add them to the rel
 ## Acknowledgements
 
 Travel time model informed by community speed testing from Wowhead and MMO-Champion forums. Zone map IDs from the Warcraft Wiki API reference. Coordinate data from Icy Veins TomTom waypoint guides.
+
+## Operations guide
+
+Read the [repository operations guide](docs/operations-guide/README.md) for startup, working checks, troubleshooting, safe shutdown, and the Word/PDF editions.
